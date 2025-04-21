@@ -1,0 +1,59 @@
+name: Gradle CI with Docker and Sonar
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  SONAR_HOST_URL: https://sonarcloud.io  # or your self-hosted SonarQube URL
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout source code
+      uses: actions/checkout@v4
+
+    - name: Set up JDK
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
+    - name: Cache Gradle dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+        key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+
+    - name: Generate Avro classes
+      run: ./gradlew generateAvroJava
+
+    - name: Run Unit Tests
+      run: ./gradlew test
+
+    - name: SonarQube Analysis
+      env:
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      run: ./gradlew sonarqube \
+          -Dsonar.projectKey=${{ github.repository }} \
+          -Dsonar.host.url=${{ env.SONAR_HOST_URL }} \
+          -Dsonar.login=${{ secrets.SONAR_TOKEN }}
+
+    - name: Docker build
+      run: |
+        docker build -t $REGISTRY/${{ env.IMAGE_NAME }}:latest .
+
+    - name: Docker Login
+      run: echo "${{ secrets.GHCR_TOKEN }}" | docker login $REGISTRY -u "${{ secrets.GHCR_USERNAME }}" --password-stdin
+
+    - name: Push Docker image
+      run: |
+        docker push $REGISTRY/${{ env.IMAGE_NAME }}:latest
